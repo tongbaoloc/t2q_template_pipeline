@@ -35,7 +35,7 @@ class Pipeline:
         # The identifier must be unique across all pipelines.
         # The identifier must be an alphanumeric string that can include underscores or hyphens. It cannot contain spaces, special characters, slashes, or backslashes.
         # self.id = "wiki_pipeline"
-        # self.name = "Database Pets 1 Insights"
+        self.name = "<<pipeline_name>>"
 
         self.T2Q_URL: str = f"{os.getenv("T2Q_BASE_URL", "http://localhost:8000")}"
         self.T2Q_API_KEY: str = os.getenv("T2Q_API_KEY", "1234567890")
