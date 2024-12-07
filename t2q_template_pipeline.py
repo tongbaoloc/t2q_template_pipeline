@@ -70,6 +70,7 @@ class Pipeline:
         pass
 
     async def on_valves_updated(self):
+        self.init_db_connection()
         print(f"on_valves_updated:{__name__}")
         pass
 
