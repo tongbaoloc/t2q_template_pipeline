@@ -1,4 +1,5 @@
 from typing import List, Union, Generator, Iterator
+import openai
 import pandas as pd
 from pydantic import BaseModel
 import requests
@@ -16,6 +17,10 @@ class TranslateForm(BaseModel):
     business_context: str = ""
     business_rules: List[str] = []
     business_examples: List[BusinessExample] = []
+    schema_description: str = ""
+class ExtractSchemaRequest(BaseModel):
+    database_url: str
+    schema_id: str
 
 class Pipeline:
 
@@ -25,9 +30,10 @@ class Pipeline:
         DB_USER: str
         DB_PASSWORD: str        
         DB_DATABASE: str
-        BUSINESS_CONTEXT: str
-        BUSINESS_RULES: str
-        EXAMPLE_LINK: str
+        DB_SCHEMA_DESCRIPTION: str
+        # BUSINESS_CONTEXT: str
+        # BUSINESS_RULES: str
+        # EXAMPLE_LINK: str
 
     def __init__(self):
         # Optionally, you can set the id and name of the pipeline.
@@ -35,27 +41,29 @@ class Pipeline:
         # The identifier must be unique across all pipelines.
         # The identifier must be an alphanumeric string that can include underscores or hyphens. It cannot contain spaces, special characters, slashes, or backslashes.
         # self.id = "wiki_pipeline"
-        self.name = "<<pipeline_name>>"
+        self.name = "Organization PTN Employee Pipeline"
 
         self.T2Q_URL: str = f"{os.getenv("T2Q_BASE_URL", "http://localhost:8000")}"
         self.T2Q_API_KEY: str = os.getenv("T2Q_API_KEY", "1234567890")
 
         self.ICL_TYPE: str = os.getenv("ICL_TYPE", "zero_shot")
+        self.OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self.OPENAI_API_BASE_URL: str = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1")
-        self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "<<openai_api_key>>")
+        self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
         self.valves = self.Valves(
             **{
                 "pipelines": ["*"],   # Connect to all pipelines
-                "name": "<<pipeline_name>>",                                                         
+                "name": "Organization PTN Employee Pipeline",                                                         
                 "DB_HOST": os.getenv("DB_HOST", "<<db_host>>"),
                 "DB_PORT": os.getenv("DB_PORT", "5432"),
                 "DB_USER": os.getenv("DB_USER", "<<db_user>>"),
                 "DB_PASSWORD": os.getenv("DB_PASSWORD", "<<db_password>>"),
                 "DB_DATABASE": os.getenv("DB_DATABASE", "<<db_database>>"),
-                "BUSINESS_CONTEXT": "<<business_context>>",
-                "BUSINESS_RULES": "<<business_rules>>",
-                "EXAMPLE_LINK": "<<example_link>>",
+                "DB_SCHEMA_DESCRIPTION": "to be updated",
+                # "BUSINESS_CONTEXT": "<<business_context>>",
+                # "BUSINESS_RULES": "<<business_rules>>",
+                # "EXAMPLE_LINK": "<<example_link>>",
             }
         )
 
@@ -70,9 +78,29 @@ class Pipeline:
         pass
 
     async def on_valves_updated(self):
+        
         self.init_db_connection()
-        print(f"on_valves_updated:{__name__}")
-        pass
+
+        if self.valves.DB_DATABASE:
+
+            url = f"{self.T2Q_URL}/v1/t2q/extract-schema"
+
+            print(f"🚀 url: {url}")
+
+            request = ExtractSchemaRequest(
+                database_url= f"postgresql://{self.valves.DB_USER}:{self.valves.DB_PASSWORD}@{self.valves.DB_HOST}:{self.valves.DB_PORT}/{self.valves.DB_DATABASE}",
+                schema_id=self.valves.DB_DATABASE,
+            )
+
+            r = requests.post(
+                url=url,   
+                headers={"X-API-Key": f"{self.T2Q_API_KEY}"},
+                json=request.model_dump(),
+            )
+
+            if r.status_code == 200:
+                print(f"🚀 DB_SCHEMA_DESCRIPTION: {self.valves.DB_SCHEMA_DESCRIPTION}")
+                self.valves.DB_SCHEMA_DESCRIPTION = str(r.json())
 
     async def on_shutdown(self):
         print(f"on_shutdown:{__name__}")
@@ -102,33 +130,25 @@ class Pipeline:
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Generator, Iterator]:
         
-        # curl -X 'POST' \
-        # 'http://localhost:8000/v1/t2q/translate' \
-        # -H 'accept: application/json' \
-        # -H 'X-API-Key: 1234567890' \
-        # -H 'Content-Type: application/json' \
-        # -d '{
-        # "human_question": "many cars",
-        # "db_id": "car_1",
-        # "icl_type": "zero_shot",
-        # "business_context": "",
-        # "business_rules": [],
-        # "business_examples": []
-        # }'
+        business_intent_check = self.business_intent_check(user_message)
+
+        print(f"🚀 business_intent_check: {business_intent_check}")
+        
+        # Check if the question is business-related
+        if not business_intent_check:
+            return "I can only answer questions related to business and employee data. Please rephrase your question to focus on business-related topics."
 
         translate_form = TranslateForm(
             human_question=user_message,
             db_id=self.valves.DB_DATABASE,
             icl_type=self.ICL_TYPE,
-            business_context=self.valves.BUSINESS_CONTEXT,
+            business_context="",
             business_rules=[],
             business_examples=[],
+            schema_description=self.valves.DB_SCHEMA_DESCRIPTION,
         )
 
-        # url = self.T2Q_URL.replace("[question]", user_message).replace("[icl_type]", self.ICL_TYPE).replace("[db_id]", self.valves.DB_DATABASE).replace("[business_context]", self.valves.BUSINESS_CONTEXT)
         url = f"{self.T2Q_URL}/v1/t2q/translate"
-
-        print(f"🔥 url: {url}")
 
         r = requests.post(
             url=url,   
@@ -146,7 +166,6 @@ class Pipeline:
                     
                     query = f"```sql\n{predicted_sql_query}\n```"
                     
-                    # Convert the SQL string to a SQLAlchemy text object
                     sql = text(predicted_sql_query)
                     
                     with self.engine.connect() as connection:
@@ -155,11 +174,62 @@ class Pipeline:
 
                     return f"**Generated SQL Query:**\n {query}\n\n\n**Data Response:**\n {self.format_markdown_results(final_response)}"
                 else:
-                    return "Cannot translate question to SQL query"
+                    return "I wasn't able to translate that into SQL just yet - could you try rephrasing your question? 😊"
 
             except requests.exceptions.JSONDecodeError as e:
                 print(f"🔥 Error: Received status code {r.status_code} and error: {e}")
-                return "Cannot translate question to SQL query"
+                return "I wasn't able to translate that into SQL just yet - could you try rephrasing your question? 😊"
+
         else:
-            print(f"🔥 Error: Received status code {r.status_code}")
-            return "Cannot translate question to SQL query"
+            print(f"🔥 Error: Received status code {r.status_code} and error: {r.text}")
+            return "I wasn't able to translate that into SQL just yet - could you try rephrasing your question? 😊"
+
+    def business_intent_check(self, user_message: str):
+
+        BUSINESS_INTENT_CHECK_PROMPT = """
+            You are a business expert. You are given a question and business context (schema description, business context) and you need to determine if the question is business-related.
+            If it is, return True. If it is not, return False. And not explain anything.
+
+            Question: {USER_MESSAGE}
+            Business Context: {BUSINESS_CONTEXT}
+            Business Schema Description: {DB_SCHEMA_DESCRIPTION}
+        """
+
+        BUSINESS_INTENT_CHECK_PROMPT = BUSINESS_INTENT_CHECK_PROMPT.format(
+            USER_MESSAGE=user_message,
+            BUSINESS_CONTEXT="",
+            DB_SCHEMA_DESCRIPTION=self.valves.DB_SCHEMA_DESCRIPTION,
+        )
+
+        print(f"🚀 BUSINESS_INTENT_CHECK_PROMPT: {BUSINESS_INTENT_CHECK_PROMPT}")
+
+        headers = {}
+        headers["Authorization"] = f"Bearer {self.OPENAI_API_KEY}"
+        headers["Content-Type"] = "application/json"
+
+        payload = {
+            "model": self.OPENAI_MODEL,
+            "messages": [
+                {"role": "system", "content": "You are a business expert. Respond only with true or false."},
+                {"role": "user", "content": BUSINESS_INTENT_CHECK_PROMPT}
+            ],
+            "temperature": 0,
+            "max_tokens": 10  # Increased from 1 to allow for response
+            # Remove response_format as it's not needed and causing issues
+        }
+
+        try:
+            r = requests.post(
+                url=f"{self.OPENAI_API_BASE_URL}/chat/completions",  # Use the base URL from config
+                json=payload,
+                headers=headers,
+            )
+
+            r.raise_for_status()
+            
+            response_content = r.json()["choices"][0]["message"]["content"].lower()
+            return "true" in response_content  # More flexible check for true/false response
+
+        except Exception as e:
+            print(f"🔥 Error in business_intent_check: {str(e)}")
+            return True  # Fallback to allow the query to proceed
