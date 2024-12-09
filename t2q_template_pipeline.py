@@ -43,7 +43,7 @@ class Pipeline:
         # self.id = "wiki_pipeline"
         self.name = "Organization PTN Employee Pipeline"
 
-        self.T2Q_URL: str = f"{os.getenv("T2Q_BASE_URL", "http://localhost:8000")}"
+        self.T2Q_URL: str = os.getenv("T2Q_BASE_URL", "http://localhost:8000")
         self.T2Q_API_KEY: str = os.getenv("T2Q_API_KEY", "1234567890")
 
         self.ICL_TYPE: str = os.getenv("ICL_TYPE", "zero_shot")
