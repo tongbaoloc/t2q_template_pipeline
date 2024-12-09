@@ -138,13 +138,17 @@ class Pipeline:
         if not business_intent_check:
             return "I can only answer questions related to business and employee data. Please rephrase your question to focus on business-related topics."
 
+        business_context = body.get("business_context", "")
+        business_rules = body.get("business_rules", [])
+        examples = body.get("examples", [])
+
         translate_form = TranslateForm(
             human_question=user_message,
             db_id=self.valves.DB_DATABASE,
             icl_type=self.ICL_TYPE,
-            business_context="",
-            business_rules=[],
-            business_examples=[],
+            business_context=business_context,
+            business_rules=business_rules,
+            business_examples=examples,
             schema_description=self.valves.DB_SCHEMA_DESCRIPTION,
         )
 
