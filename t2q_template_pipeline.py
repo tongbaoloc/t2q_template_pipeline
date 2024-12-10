@@ -8,7 +8,7 @@ import os
 
 class BusinessExample(BaseModel):
     question: str
-    sql_query: str
+    answer: str
 
 class TranslateForm(BaseModel):
     human_question: str
@@ -41,7 +41,7 @@ class Pipeline:
         # The identifier must be unique across all pipelines.
         # The identifier must be an alphanumeric string that can include underscores or hyphens. It cannot contain spaces, special characters, slashes, or backslashes.
         # self.id = "wiki_pipeline"
-        self.name = "Organization PTN Employee Pipeline"
+        # self.name = "Organization PTN Employee Pipeline"
 
         self.T2Q_URL: str = os.getenv("T2Q_BASE_URL", "http://localhost:8000")
         self.T2Q_API_KEY: str = os.getenv("T2Q_API_KEY", "1234567890")
@@ -53,14 +53,14 @@ class Pipeline:
 
         self.valves = self.Valves(
             **{
-                "pipelines": ["*"],   # Connect to all pipelines
+                # "pipelines": ["*"],   # Connect to all pipelines
                 "name": "Organization PTN Employee Pipeline",                                                         
                 "DB_HOST": os.getenv("DB_HOST", "<<db_host>>"),
                 "DB_PORT": os.getenv("DB_PORT", "5432"),
                 "DB_USER": os.getenv("DB_USER", "<<db_user>>"),
                 "DB_PASSWORD": os.getenv("DB_PASSWORD", "<<db_password>>"),
                 "DB_DATABASE": os.getenv("DB_DATABASE", "<<db_database>>"),
-                "DB_SCHEMA_DESCRIPTION": "to be updated",
+                "DB_SCHEMA_DESCRIPTION": os.getenv("DB_SCHEMA_DESCRIPTION", "<<to be updated>>")
                 # "BUSINESS_CONTEXT": "<<business_context>>",
                 # "BUSINESS_RULES": "<<business_rules>>",
                 # "EXAMPLE_LINK": "<<example_link>>",
@@ -75,13 +75,18 @@ class Pipeline:
 
     async def on_startup(self):
         self.init_db_connection()
+        # TODO: remove this after testing it should be loaded from the valves
+        self.update_schema_description()
         pass
 
     async def on_valves_updated(self):
         
         self.init_db_connection()
 
-        if self.valves.DB_DATABASE:
+        self.update_schema_description()
+
+    def update_schema_description(self):
+        if self.valves.DB_DATABASE != "<<db_database>>" and self.valves.DB_SCHEMA_DESCRIPTION == "to be updated":
 
             url = f"{self.T2Q_URL}/v1/t2q/extract-schema"
 
@@ -92,15 +97,19 @@ class Pipeline:
                 schema_id=self.valves.DB_DATABASE,
             )
 
-            r = requests.post(
-                url=url,   
-                headers={"X-API-Key": f"{self.T2Q_API_KEY}"},
-                json=request.model_dump(),
-            )
+            try:
+                r = requests.post(
+                    url=url,   
+                    headers={"X-API-Key": f"{self.T2Q_API_KEY}"},
+                    json=request.model_dump(),
+                )
 
-            if r.status_code == 200:
-                print(f"🚀 DB_SCHEMA_DESCRIPTION: {self.valves.DB_SCHEMA_DESCRIPTION}")
-                self.valves.DB_SCHEMA_DESCRIPTION = str(r.json())
+                if r.status_code == 200:
+                    print(f"🚀 DB_SCHEMA_DESCRIPTION: {self.valves.DB_SCHEMA_DESCRIPTION}")
+                    self.valves.DB_SCHEMA_DESCRIPTION = str(r.json())
+            except Exception as e:
+                print(f"🔥 Error: {e}")
+                print(f"🔥 Have to run the t2q composed service to get the schema description")
 
     async def on_shutdown(self):
         print(f"on_shutdown:{__name__}")
@@ -125,18 +134,16 @@ class Pipeline:
             markdown += "| " + " | ".join(str(value) for value in row) + " |\n"
             
         return markdown
+    
+    def format_business_rules(self, business_rules: List[str]):
+        # Rule 1: , Rule 2: , Rule 3:
+        return ", ".join([f"Rule {i+1}: {rule}" for i, rule in enumerate(business_rules)])
 
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Generator, Iterator]:
         
-        business_intent_check = self.business_intent_check(user_message)
-
-        print(f"🚀 business_intent_check: {business_intent_check}")
-        
-        # Check if the question is business-related
-        if not business_intent_check:
-            return "I can only answer questions related to business and employee data. Please rephrase your question to focus on business-related topics."
+        print(f"🚀🚀🚀🚀🚀 body: {body}")
 
         business_context = body.get("business_context", "")
         business_rules = body.get("business_rules", [])
@@ -151,7 +158,19 @@ class Pipeline:
             business_examples=examples,
             schema_description=self.valves.DB_SCHEMA_DESCRIPTION,
         )
+        
+        business_intent_check = self.business_intent_check(
+            user_message=user_message,
+            business_context=business_context,
+            business_rules=self.format_business_rules(business_rules)
+        )
 
+        print(f"🚀 business_intent_check: {business_intent_check}")
+        
+        # Check if the question is business-related
+        if not business_intent_check:
+            return "I can only answer questions related to business and employee data. Please rephrase your question to focus on business-related topics."
+      
         url = f"{self.T2Q_URL}/v1/t2q/translate"
 
         r = requests.post(
@@ -188,7 +207,7 @@ class Pipeline:
             print(f"🔥 Error: Received status code {r.status_code} and error: {r.text}")
             return "I wasn't able to translate that into SQL just yet - could you try rephrasing your question? 😊"
 
-    def business_intent_check(self, user_message: str):
+    def business_intent_check(self, user_message: str, business_context: str, business_rules: str):
 
         BUSINESS_INTENT_CHECK_PROMPT = """
             You are a business expert. You are given a question and business context (schema description, business context) and you need to determine if the question is business-related.
@@ -197,12 +216,14 @@ class Pipeline:
             Question: {USER_MESSAGE}
             Business Context: {BUSINESS_CONTEXT}
             Business Schema Description: {DB_SCHEMA_DESCRIPTION}
+            Business Rules: {BUSINESS_RULES}
         """
 
         BUSINESS_INTENT_CHECK_PROMPT = BUSINESS_INTENT_CHECK_PROMPT.format(
             USER_MESSAGE=user_message,
-            BUSINESS_CONTEXT="",
+            BUSINESS_CONTEXT=business_context,
             DB_SCHEMA_DESCRIPTION=self.valves.DB_SCHEMA_DESCRIPTION,
+            BUSINESS_RULES=business_rules
         )
 
         print(f"🚀 BUSINESS_INTENT_CHECK_PROMPT: {BUSINESS_INTENT_CHECK_PROMPT}")
