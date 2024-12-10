@@ -86,7 +86,7 @@ class Pipeline:
         self.update_schema_description()
 
     def update_schema_description(self):
-        if self.valves.DB_DATABASE != "<<db_database>>" and self.valves.DB_SCHEMA_DESCRIPTION == "to be updated":
+        if self.valves.DB_DATABASE != "<<db_database>>" and self.valves.DB_SCHEMA_DESCRIPTION == "<<to be updated>>":
 
             url = f"{self.T2Q_URL}/v1/t2q/extract-schema"
 
