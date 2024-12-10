@@ -54,7 +54,7 @@ class Pipeline:
         self.valves = self.Valves(
             **{
                 # "pipelines": ["*"],   # Connect to all pipelines
-                "name": "Organization PTN Employee Pipeline",                                                         
+                # "name": "Organization PTN Employee Pipeline",                                                         
                 "DB_HOST": os.getenv("DB_HOST", "<<db_host>>"),
                 "DB_PORT": os.getenv("DB_PORT", "5432"),
                 "DB_USER": os.getenv("DB_USER", "<<db_user>>"),
